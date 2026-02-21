@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+
+  --color-inbox: #3b82f6;
+  --color-next-actions: #10b981;
+  --color-waiting-for: #f59e0b;
+  --color-projects: #8b5cf6;
+  --color-calendar: #06b6d4;
+  --color-someday-maybe: #6b7280;
+  --color-reference: #78716c;
+  --color-trash: #ef4444;
+  --color-completed: #22c55e;
+
+  --color-priority-urgent: #dc2626;
+  --color-priority-high: #f97316;
+  --color-priority-medium: #eab308;
+  --color-priority-low: #6b7280;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f3f4f6;
+  color: #1f2937;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
