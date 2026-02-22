@@ -13,22 +13,24 @@ export async function enqueue(
     action,
     data,
     timestamp: Date.now(),
-    synced: false,
+    synced: 0,
   });
 }
 
 export async function getPending(): Promise<SyncOperation[]> {
-  return db.syncQueue.where('synced').equals(0).toArray();
+  // Filter handles both legacy boolean false and number 0
+  return db.syncQueue.filter(item => !item.synced).toArray();
 }
 
 export async function markSynced(ids: number[]): Promise<void> {
   await db.transaction('rw', db.syncQueue, async () => {
     for (const id of ids) {
-      await db.syncQueue.update(id, { synced: true });
+      await db.syncQueue.update(id, { synced: 1 });
     }
   });
 }
 
 export async function clearSynced(): Promise<void> {
-  await db.syncQueue.where('synced').equals(1).delete();
+  // Filter handles both legacy boolean true and number 1
+  await db.syncQueue.filter(item => !!item.synced).delete();
 }

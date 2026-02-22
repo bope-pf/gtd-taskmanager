@@ -8,7 +8,7 @@ export interface SyncOperation {
   action: SyncAction;
   data: Record<string, unknown>;
   timestamp: number;
-  synced: boolean;
+  synced: number; // 0 = pending, 1 = synced (IndexedDB indexes require numbers)
 }
 
 export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'error';
