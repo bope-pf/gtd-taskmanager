@@ -23,7 +23,7 @@ class SyncService {
     });
 
     if (this.isOnline && this.hasPinConfigured()) {
-      this.setStatus('synced');
+      this.syncNow();
     }
   }
 

@@ -1,6 +1,35 @@
 import { db } from './database';
 import type { Task, GtdList, TaskInput, CalendarSlot } from '../types/task';
 import { generateId } from '../utils/idGenerator';
+import * as syncQueue from './syncQueue';
+import { syncService } from '../services/syncService';
+
+function taskToSyncData(task: Task): Record<string, unknown> {
+  return {
+    id: task.id,
+    title: task.title,
+    memo: task.memo,
+    gtd_list: task.gtdList,
+    priority: task.priority,
+    deadline: task.deadline?.toISOString() ?? null,
+    calendar_slot_start: task.calendarSlotStart?.toISOString() ?? null,
+    calendar_slot_end: task.calendarSlotEnd?.toISOString() ?? null,
+    calendar_slots: (task.calendarSlots || []).map(s => ({ id: s.id, start: s.start.toISOString(), end: s.end.toISOString() })),
+    tags: task.tags,
+    project_id: task.projectId,
+    sort_order: task.sortOrder,
+    is_completed: task.isCompleted,
+    completed_at: task.completedAt?.toISOString() ?? null,
+    created_at: task.createdAt.toISOString(),
+    updated_at: task.updatedAt.toISOString(),
+    deleted_at: task.deletedAt?.toISOString() ?? null,
+  };
+}
+
+async function enqueueTask(task: Task, action: 'create' | 'update' | 'delete') {
+  await syncQueue.enqueue('task', task.id, action, taskToSyncData(task));
+  syncService.syncNow();
+}
 
 export async function getAllTasks(listFilter?: GtdList): Promise<Task[]> {
   let collection = db.tasks.filter(t => t.deletedAt === null);
@@ -36,6 +65,7 @@ export async function createTask(input: TaskInput): Promise<Task> {
     deletedAt: null,
   };
   await db.tasks.add(task);
+  await enqueueTask(task, 'create');
   return task;
 }
 
@@ -44,6 +74,8 @@ export async function updateTask(id: string, changes: Partial<Task>): Promise<vo
     ...changes,
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(id);
+  if (updated) await enqueueTask(updated, 'update');
 }
 
 export async function deleteTask(id: string): Promise<void> {
@@ -51,6 +83,8 @@ export async function deleteTask(id: string): Promise<void> {
     deletedAt: new Date(),
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(id);
+  if (updated) await enqueueTask(updated, 'delete');
 }
 
 export async function completeTask(id: string): Promise<void> {
@@ -61,6 +95,8 @@ export async function completeTask(id: string): Promise<void> {
     gtdList: 'completed' as GtdList,
     updatedAt: now,
   });
+  const updated = await db.tasks.get(id);
+  if (updated) await enqueueTask(updated, 'update');
 }
 
 export async function uncompleteTask(id: string, targetList: GtdList): Promise<void> {
@@ -70,6 +106,8 @@ export async function uncompleteTask(id: string, targetList: GtdList): Promise<v
     gtdList: targetList,
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(id);
+  if (updated) await enqueueTask(updated, 'update');
 }
 
 export async function moveTask(id: string, targetList: GtdList, sortOrder?: number): Promise<void> {
@@ -79,6 +117,8 @@ export async function moveTask(id: string, targetList: GtdList, sortOrder?: numb
     sortOrder: order,
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(id);
+  if (updated) await enqueueTask(updated, 'update');
 }
 
 export async function reorderTasks(_listId: GtdList, orderedIds: string[]): Promise<void> {
@@ -129,6 +169,8 @@ export async function addCalendarSlot(taskId: string, start: Date, end: Date): P
     calendarSlots: slots,
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(taskId);
+  if (updated) await enqueueTask(updated, 'update');
   return slot;
 }
 
@@ -142,6 +184,8 @@ export async function updateCalendarSlot(taskId: string, slotId: string, start: 
     calendarSlots: slots,
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(taskId);
+  if (updated) await enqueueTask(updated, 'update');
 }
 
 export async function removeCalendarSlot(taskId: string, slotId: string): Promise<void> {
@@ -152,6 +196,8 @@ export async function removeCalendarSlot(taskId: string, slotId: string): Promis
     calendarSlots: slots,
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(taskId);
+  if (updated) await enqueueTask(updated, 'update');
 }
 
 export async function removeAllCalendarSlots(taskId: string): Promise<void> {
@@ -159,4 +205,6 @@ export async function removeAllCalendarSlots(taskId: string): Promise<void> {
     calendarSlots: [],
     updatedAt: new Date(),
   });
+  const updated = await db.tasks.get(taskId);
+  if (updated) await enqueueTask(updated, 'update');
 }
