@@ -13,12 +13,18 @@ interface WeeklyCalendarProps {
   onUpdateSlot: (taskId: string, slotId: string, start: Date, end: Date) => void;
   onRemoveSlot: (taskId: string, slotId: string) => void;
   onCompleteTask: (taskId: string) => void;
+  // Mobile props
+  isMobile?: boolean;
+  selectedTaskId?: string | null;
+  onClearSelection?: () => void;
 }
 
 const DAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
 const DEFAULT_SCROLL_HOUR = 9;
 const SLOT_HEIGHT = 40; // h-10 = 40px
 const SLOTS_PER_HOUR = 60 / CALENDAR_SLOT_MINUTES;
+const TIME_COL_WIDTH = 60;
+const MOBILE_TIME_COL_WIDTH = 48;
 
 interface DragState {
   taskId: string;
@@ -46,6 +52,9 @@ export function WeeklyCalendar({
   onUpdateSlot,
   onRemoveSlot,
   onCompleteTask,
+  isMobile = false,
+  selectedTaskId = null,
+  onClearSelection,
 }: WeeklyCalendarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const weekDates = getWeekDates(baseDate);
@@ -53,8 +62,13 @@ export function WeeklyCalendar({
   const [hoverSlot, setHoverSlot] = useState<{ dayIndex: number; hour: number; minute: number } | null>(null);
   const [showNightHours, setShowNightHours] = useState(false);
 
+  // Mobile: single-day view with day index
+  const todayDayIndex = weekDates.findIndex(d => isSameDay(d, new Date()));
+  const [selectedDayIndex, setSelectedDayIndex] = useState(todayDayIndex >= 0 ? todayDayIndex : 0);
+
   const totalSlots = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * SLOTS_PER_HOUR;
   const visibleStartHour = showNightHours ? CALENDAR_START_HOUR : CALENDAR_DAY_START_HOUR;
+  const timeColWidth = isMobile ? MOBILE_TIME_COL_WIDTH : TIME_COL_WIDTH;
 
   useEffect(() => {
     if (containerRef.current) {
@@ -62,6 +76,12 @@ export function WeeklyCalendar({
       containerRef.current.scrollTop = scrollOffset;
     }
   }, []);
+
+  // Reset selected day when baseDate changes
+  useEffect(() => {
+    const idx = weekDates.findIndex(d => isSameDay(d, new Date()));
+    setSelectedDayIndex(idx >= 0 ? idx : 0);
+  }, [baseDate]);
 
   // Compute all slot displays for the week
   const slotDisplays: SlotDisplay[] = [];
@@ -101,66 +121,116 @@ export function WeeklyCalendar({
     });
   }
 
+  // Filter to single day on mobile
+  const visibleSlotDisplays = isMobile
+    ? slotDisplays.filter(sd => sd.dayIndex === selectedDayIndex)
+    : slotDisplays;
+
   function dateFromSlot(dayIndex: number, hour: number, minute: number): Date {
     const d = new Date(weekDates[dayIndex]);
     d.setHours(hour, minute, 0, 0);
     return d;
   }
 
-  // Handle drag over for external drops
+  // Handle drag over for external drops (desktop)
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
   }, []);
 
-  // Handle drop from kanban
+  // Handle drop from sidebar (desktop)
   const handleDrop = useCallback((e: React.DragEvent, dayIndex: number, hour: number, minute: number) => {
     e.preventDefault();
     const taskId = e.dataTransfer.getData('text/plain');
     if (!taskId) return;
     const start = dateFromSlot(dayIndex, hour, minute);
-    const end = new Date(start.getTime() + 30 * 60000); // 30min default
+    const end = new Date(start.getTime() + 30 * 60000);
     onScheduleTask(taskId, start, end);
     setDragState(null);
   }, [weekDates, onScheduleTask]);
 
-  // Internal drag for moving scheduled tasks
+  // Handle cell click (mobile: tap-to-schedule; desktop: slotClick)
+  function handleCellClick(dayIndex: number, hour: number, minute: number) {
+    if (isMobile && selectedTaskId) {
+      const start = dateFromSlot(dayIndex, hour, minute);
+      const end = new Date(start.getTime() + 30 * 60000);
+      onScheduleTask(selectedTaskId, start, end);
+      onClearSelection?.();
+    } else {
+      onSlotClick(weekDates[dayIndex], hour, minute);
+    }
+  }
+
+  // Unified drag start for move (mouse & touch)
+  function startMove(taskId: string, slotId: string, slot: CalendarSlot) {
+    setDragState({ taskId, type: 'move', slotId, originalStart: new Date(slot.start), originalEnd: new Date(slot.end) });
+  }
+
+  function startResize(taskId: string, slotId: string, slot: CalendarSlot) {
+    setDragState({ taskId, type: 'resize', slotId, originalStart: new Date(slot.start), originalEnd: new Date(slot.end) });
+  }
+
   const handleMoveStart = useCallback((taskId: string, slotId: string, slot: CalendarSlot, e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    setDragState({ taskId, type: 'move', slotId, originalStart: new Date(slot.start), originalEnd: new Date(slot.end) });
+    startMove(taskId, slotId, slot);
   }, []);
 
-  // Internal drag for resizing
   const handleResizeStart = useCallback((taskId: string, slotId: string, slot: CalendarSlot, e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    setDragState({ taskId, type: 'resize', slotId, originalStart: new Date(slot.start), originalEnd: new Date(slot.end) });
+    startResize(taskId, slotId, slot);
   }, []);
 
-  // Mouse move handler for internal drag
+  // Touch start handlers
+  const handleTouchMoveStart = useCallback((taskId: string, slotId: string, slot: CalendarSlot, e: React.TouchEvent) => {
+    e.stopPropagation();
+    startMove(taskId, slotId, slot);
+  }, []);
+
+  const handleTouchResizeStart = useCallback((taskId: string, slotId: string, slot: CalendarSlot, e: React.TouchEvent) => {
+    e.stopPropagation();
+    startResize(taskId, slotId, slot);
+  }, []);
+
+  // Unified pointer move handler
   useEffect(() => {
     if (!dragState || (dragState.type !== 'move' && dragState.type !== 'resize')) return;
 
-    function handleMouseMove(e: MouseEvent) {
+    function handlePointerMove(clientX: number, clientY: number) {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const scrollTop = containerRef.current.scrollTop;
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top + scrollTop - 48; // subtract header height
+      const x = clientX - rect.left;
+      const y = clientY - rect.top + scrollTop - 48; // subtract header height
 
-      const timeColWidth = 60;
-      const dayWidth = (rect.width - timeColWidth) / 7;
-      const dayIndex = Math.max(0, Math.min(6, Math.floor((x - timeColWidth) / dayWidth)));
-
-      const slotIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(y / SLOT_HEIGHT)));
-      const hour = CALENDAR_START_HOUR + Math.floor(slotIndex / SLOTS_PER_HOUR);
-      const minute = (slotIndex % SLOTS_PER_HOUR) * CALENDAR_SLOT_MINUTES;
-
-      setHoverSlot({ dayIndex, hour, minute });
+      if (isMobile) {
+        // Single-day view: only one column
+        const slotIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(y / SLOT_HEIGHT)));
+        const hour = CALENDAR_START_HOUR + Math.floor(slotIndex / SLOTS_PER_HOUR);
+        const minute = (slotIndex % SLOTS_PER_HOUR) * CALENDAR_SLOT_MINUTES;
+        setHoverSlot({ dayIndex: selectedDayIndex, hour, minute });
+      } else {
+        const dayWidth = (rect.width - timeColWidth) / 7;
+        const dayIndex = Math.max(0, Math.min(6, Math.floor((x - timeColWidth) / dayWidth)));
+        const slotIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(y / SLOT_HEIGHT)));
+        const hour = CALENDAR_START_HOUR + Math.floor(slotIndex / SLOTS_PER_HOUR);
+        const minute = (slotIndex % SLOTS_PER_HOUR) * CALENDAR_SLOT_MINUTES;
+        setHoverSlot({ dayIndex, hour, minute });
+      }
     }
 
-    function handleMouseUp() {
+    function handleMouseMove(e: MouseEvent) {
+      handlePointerMove(e.clientX, e.clientY);
+    }
+
+    function handleTouchMove(e: TouchEvent) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handlePointerMove(touch.clientX, touch.clientY);
+    }
+
+    function handleEnd() {
       if (!dragState || !hoverSlot || !dragState.slotId) {
         setDragState(null);
         setHoverSlot(null);
@@ -185,16 +255,18 @@ export function WeeklyCalendar({
     }
 
     window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mouseup', handleEnd);
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleEnd);
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleEnd);
     };
-  }, [dragState, hoverSlot, weekDates, onUpdateSlot, totalSlots]);
+  }, [dragState, hoverSlot, weekDates, onUpdateSlot, totalSlots, isMobile, selectedDayIndex, timeColWidth]);
 
   const today = new Date();
-
-  // Night hours offset: when night hours are hidden, shift topPx for slot displays
   const nightHoursOffset = showNightHours ? 0 : (CALENDAR_DAY_START_HOUR - CALENDAR_START_HOUR) * SLOTS_PER_HOUR * SLOT_HEIGHT;
 
   const slots: { hour: number; minute: number }[] = [];
@@ -204,36 +276,67 @@ export function WeeklyCalendar({
     }
   }
 
+  const isSchedulingMode = isMobile && !!selectedTaskId;
+
   return (
     <div
       ref={containerRef}
       className="overflow-auto bg-white rounded-lg shadow-sm border border-gray-200 select-none"
-      style={{ maxHeight: 'calc(100vh - 140px)' }}
+      style={{ maxHeight: isMobile ? 'calc(100vh - 200px)' : 'calc(100vh - 140px)' }}
     >
-      {/* Header row with day names */}
-      <div className="grid grid-cols-[60px_repeat(7,1fr)] sticky top-0 bg-white z-20 border-b border-gray-200">
-        <div className="p-2 text-xs text-gray-400 text-center border-r border-gray-100" />
-        {weekDates.map((date, i) => {
-          const isToday = isSameDay(date, today);
-          return (
-            <div
-              key={i}
-              className={`p-2 text-center border-r border-gray-100 last:border-r-0 ${isToday ? 'bg-blue-50' : ''}`}
-            >
-              <div className="text-xs text-gray-500">{DAY_LABELS[i]}</div>
-              <div className={`text-sm font-medium ${isToday ? 'text-blue-600' : 'text-gray-700'}`}>
-                {date.getDate()}
+      {/* Mobile: Day tabs */}
+      {isMobile && (
+        <div className="flex overflow-x-auto border-b border-gray-200 bg-white sticky top-0 z-20">
+          {weekDates.map((date, i) => {
+            const isToday = isSameDay(date, today);
+            const isSelected = i === selectedDayIndex;
+            return (
+              <button
+                key={i}
+                onClick={() => setSelectedDayIndex(i)}
+                className={`flex-shrink-0 flex-1 min-w-[48px] py-2 text-center transition-colors
+                  ${isSelected ? 'bg-blue-50 border-b-2 border-blue-600' : 'border-b-2 border-transparent'}
+                  ${isToday && !isSelected ? 'bg-blue-50/50' : ''}
+                `}
+              >
+                <div className={`text-xs ${isSelected ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+                  {DAY_LABELS[i]}
+                </div>
+                <div className={`text-sm font-medium ${isSelected ? 'text-blue-600' : isToday ? 'text-blue-500' : 'text-gray-700'}`}>
+                  {date.getDate()}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Desktop: Header row with day names */}
+      {!isMobile && (
+        <div className="grid grid-cols-[60px_repeat(7,1fr)] sticky top-0 bg-white z-20 border-b border-gray-200">
+          <div className="p-2 text-xs text-gray-400 text-center border-r border-gray-100" />
+          {weekDates.map((date, i) => {
+            const isToday = isSameDay(date, today);
+            return (
+              <div
+                key={i}
+                className={`p-2 text-center border-r border-gray-100 last:border-r-0 ${isToday ? 'bg-blue-50' : ''}`}
+              >
+                <div className="text-xs text-gray-500">{DAY_LABELS[i]}</div>
+                <div className={`text-sm font-medium ${isToday ? 'text-blue-600' : 'text-gray-700'}`}>
+                  {date.getDate()}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Night hours toggle */}
       {!showNightHours && (
-        <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-200">
+        <div className={isMobile ? 'grid grid-cols-[48px_1fr] border-b border-gray-200' : 'grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-200'}>
           <div className="border-r border-gray-100" />
-          <div className="col-span-7">
+          <div className={isMobile ? '' : 'col-span-7'}>
             <button
               onClick={() => setShowNightHours(true)}
               className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
@@ -247,9 +350,9 @@ export function WeeklyCalendar({
         </div>
       )}
       {showNightHours && visibleStartHour === CALENDAR_START_HOUR && (
-        <div className="grid grid-cols-[60px_repeat(7,1fr)]">
+        <div className={isMobile ? 'grid grid-cols-[48px_1fr]' : 'grid grid-cols-[60px_repeat(7,1fr)]'}>
           <div className="border-r border-gray-100" />
-          <div className="col-span-7">
+          <div className={isMobile ? '' : 'col-span-7'}>
             <button
               onClick={() => setShowNightHours(false)}
               className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
@@ -264,35 +367,66 @@ export function WeeklyCalendar({
       )}
 
       {/* Time grid body */}
-      <div className="grid grid-cols-[60px_repeat(7,1fr)] relative">
+      <div className={`${isMobile ? 'grid grid-cols-[48px_1fr]' : 'grid grid-cols-[60px_repeat(7,1fr)]'} relative`}>
         {/* Time labels + grid cells */}
         {slots.map(({ hour, minute }) => (
           <div key={`${hour}-${minute}`} className="contents">
-            <div className="p-1 text-xs text-gray-400 text-right pr-2 border-r border-gray-100 h-10 flex items-start justify-end -mt-[1px]">
+            <div className={`p-1 text-xs text-gray-400 text-right pr-2 border-r border-gray-100 h-10 flex items-start justify-end -mt-[1px] ${isMobile ? 'text-[10px]' : ''}`}>
               {minute === 0 ? `${hour}:00` : ''}
             </div>
-            {weekDates.map((_date, dayIndex) => (
+            {isMobile ? (
+              // Mobile: single day column
               <div
-                key={dayIndex}
-                className={`h-10 border-b border-r border-gray-50 last:border-r-0 cursor-pointer relative
-                  ${hoverSlot && hoverSlot.dayIndex === dayIndex && hoverSlot.hour === hour && hoverSlot.minute === minute ? 'bg-blue-100/50' : 'hover:bg-blue-50/30'}
+                className={`h-10 border-b border-gray-50 cursor-pointer relative
+                  ${hoverSlot && hoverSlot.dayIndex === selectedDayIndex && hoverSlot.hour === hour && hoverSlot.minute === minute ? 'bg-blue-100/50' : ''}
+                  ${isSchedulingMode ? 'hover:bg-blue-100/40 bg-blue-50/20' : 'hover:bg-blue-50/30'}
                   ${minute === 0 ? 'border-t border-t-gray-200' : ''}
                 `}
                 onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, dayIndex, hour, minute)}
-                onClick={() => onSlotClick(weekDates[dayIndex], hour, minute)}
+                onDrop={(e) => handleDrop(e, selectedDayIndex, hour, minute)}
+                onClick={() => handleCellClick(selectedDayIndex, hour, minute)}
               />
-            ))}
+            ) : (
+              // Desktop: 7 day columns
+              weekDates.map((_date, dayIndex) => (
+                <div
+                  key={dayIndex}
+                  className={`h-10 border-b border-r border-gray-50 last:border-r-0 cursor-pointer relative
+                    ${hoverSlot && hoverSlot.dayIndex === dayIndex && hoverSlot.hour === hour && hoverSlot.minute === minute ? 'bg-blue-100/50' : 'hover:bg-blue-50/30'}
+                    ${minute === 0 ? 'border-t border-t-gray-200' : ''}
+                  `}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, dayIndex, hour, minute)}
+                  onClick={() => handleCellClick(dayIndex, hour, minute)}
+                />
+              ))
+            )}
           </div>
         ))}
 
         {/* Scheduled task overlays */}
-        {slotDisplays.map(({ task, slot, topPx, heightPx, dayIndex }) => {
+        {visibleSlotDisplays.map(({ task, slot, topPx, heightPx, dayIndex }) => {
           const isDeadlineOnly = slot.id.startsWith('deadline-');
           const isBeingDragged = dragState?.slotId === slot.id;
           const adjustedTop = topPx - nightHoursOffset;
-          // Hide slots that are entirely in the hidden night hours range
           if (adjustedTop + heightPx <= 0) return null;
+
+          // Overlay positioning: mobile (single col) vs desktop (7 cols)
+          const overlayStyle = isMobile
+            ? {
+                top: `${Math.max(0, adjustedTop)}px`,
+                height: `${heightPx - Math.max(0, -adjustedTop)}px`,
+                left: `${MOBILE_TIME_COL_WIDTH + 2}px`,
+                width: `calc(100% - ${MOBILE_TIME_COL_WIDTH + 6}px)`,
+                borderLeftColor: `var(--color-priority-${task.priority})`,
+              }
+            : {
+                top: `${Math.max(0, adjustedTop)}px`,
+                height: `${heightPx - Math.max(0, -adjustedTop)}px`,
+                left: `calc(${TIME_COL_WIDTH}px + ${dayIndex} * ((100% - ${TIME_COL_WIDTH}px) / 7) + 2px)`,
+                width: `calc((100% - ${TIME_COL_WIDTH}px) / 7 - 6px)`,
+                borderLeftColor: `var(--color-priority-${task.priority})`,
+              };
 
           return (
             <div
@@ -301,14 +435,9 @@ export function WeeklyCalendar({
                 ${isBeingDragged ? 'opacity-40' : 'opacity-95'}
                 ${isDeadlineOnly ? 'bg-gray-100 border-gray-400' : 'bg-blue-50 hover:bg-blue-100'}
               `}
-              style={{
-                top: `${Math.max(0, adjustedTop)}px`,
-                height: `${heightPx - Math.max(0, -adjustedTop)}px`,
-                left: `calc(60px + ${dayIndex} * ((100% - 60px) / 7) + 2px)`,
-                width: `calc((100% - 60px) / 7 - 6px)`,
-                borderLeftColor: `var(--color-priority-${task.priority})`,
-              }}
+              style={overlayStyle}
               onMouseDown={(e) => !isDeadlineOnly && handleMoveStart(task.id, slot.id, slot, e)}
+              onTouchStart={(e) => !isDeadlineOnly && handleTouchMoveStart(task.id, slot.id, slot, e)}
             >
               <div className="flex items-start justify-between gap-1">
                 <div
@@ -317,9 +446,9 @@ export function WeeklyCalendar({
                 >
                   {task.title}
                 </div>
-                {/* Action buttons - visible on hover */}
+                {/* Action buttons - always visible on mobile, hover on desktop */}
                 {!isDeadlineOnly && (
-                  <div className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
+                  <div className={`${isMobile ? 'flex' : 'hidden group-hover:flex'} items-center gap-0.5 flex-shrink-0`}>
                     <button
                       className="w-5 h-5 flex items-center justify-center rounded bg-green-100 text-green-700 hover:bg-green-200 text-xs"
                       title="完了"
@@ -347,8 +476,9 @@ export function WeeklyCalendar({
               {/* Resize handle */}
               {!isDeadlineOnly && (
                 <div
-                  className="absolute bottom-0 left-0 right-0 h-2 cursor-s-resize bg-transparent hover:bg-blue-300/30 rounded-b-lg"
-                  onMouseDown={(e) => handleResizeStart(task.id, slot.id, slot, e)}
+                  className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-transparent hover:bg-blue-300/30 rounded-b-lg"
+                  onMouseDown={(e) => { e.stopPropagation(); handleResizeStart(task.id, slot.id, slot, e); }}
+                  onTouchStart={(e) => { e.stopPropagation(); handleTouchResizeStart(task.id, slot.id, slot, e); }}
                 />
               )}
             </div>

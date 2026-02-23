@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { Task, GtdList } from '../../types/task';
 import type { CalendarViewMode } from '../../types/calendar';
 import { WeeklyCalendar } from './WeeklyCalendar';
 import { MonthlyCalendar } from './MonthlyCalendar';
+import { MobileTaskBottomSheet } from './MobileTaskBottomSheet';
 import { getPriorityConfig } from '../../constants/priorities';
 import { getListConfig } from '../../constants/gtdLists';
+import { useResponsive } from '../../hooks/useResponsive';
 
 interface CalendarViewProps {
   tasks: Task[];
@@ -22,6 +24,8 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
   const [currentDate, setCurrentDate] = useState(new Date());
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarFilter, setSidebarFilter] = useState<GtdList | 'all'>('next_actions');
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const { isMobile } = useResponsive();
 
   const calendarTasks = tasks.filter(
     t => (t.deadline || (t.calendarSlots && t.calendarSlots.length > 0)) && !t.isCompleted && t.deletedAt === null,
@@ -60,15 +64,25 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
     setCurrentDate(new Date());
   }
 
+  const clearSelection = useCallback(() => {
+    setSelectedTaskId(null);
+  }, []);
+
+  // When a task is scheduled via mobile tap, clear selection
+  const handleScheduleTask = useCallback((taskId: string, start: Date, end: Date) => {
+    onScheduleTask(taskId, start, end);
+    clearSelection();
+  }, [onScheduleTask, clearSelection]);
+
   const headerLabel = viewMode === 'weekly'
     ? `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`
     : `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Controls */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className={`flex items-center justify-between ${isMobile ? 'gap-1' : ''}`}>
+        <div className="flex items-center gap-1.5">
           <button
             onClick={navigatePrev}
             className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg"
@@ -77,7 +91,7 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h2 className="text-lg font-semibold text-gray-800 min-w-[140px] text-center">
+          <h2 className={`font-semibold text-gray-800 text-center ${isMobile ? 'text-sm min-w-[100px]' : 'text-lg min-w-[140px]'}`}>
             {headerLabel}
           </h2>
           <button
@@ -90,17 +104,17 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
           </button>
           <button
             onClick={goToToday}
-            className="ml-2 px-3 py-1 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+            className={`px-2 py-1 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg ${isMobile ? 'ml-0.5' : 'ml-2 px-3'}`}
           >
             今日
           </button>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Task sidebar toggle */}
           <button
             onClick={() => setSidebarOpen(prev => !prev)}
-            className={`px-4 py-2 text-sm rounded-xl transition-colors flex items-center gap-1.5
+            className={`px-3 py-1.5 text-sm rounded-xl transition-colors flex items-center gap-1.5
               ${sidebarOpen
                 ? 'bg-blue-100 text-blue-700 font-semibold'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -110,14 +124,14 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
             </svg>
-            タスク
+            {!isMobile && 'タスク'}
           </button>
 
           {/* View mode toggle */}
-          <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+          <div className="flex bg-gray-100 rounded-xl p-0.5 gap-0.5">
             <button
               onClick={() => setViewMode('weekly')}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                 viewMode === 'weekly'
                   ? 'bg-white shadow-sm text-gray-800 font-semibold'
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -127,7 +141,7 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
             </button>
             <button
               onClick={() => setViewMode('monthly')}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                 viewMode === 'monthly'
                   ? 'bg-white shadow-sm text-gray-800 font-semibold'
                   : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -139,10 +153,25 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
         </div>
       </div>
 
+      {/* Scheduling mode indicator (mobile) */}
+      {isMobile && selectedTaskId && !sidebarOpen && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+          <span className="text-xs text-blue-700 font-medium flex-1 animate-pulse">
+            カレンダーをタップしてスケジュール
+          </span>
+          <button
+            onClick={clearSelection}
+            className="text-xs text-gray-500 bg-white px-2 py-1 rounded-lg border"
+          >
+            取消
+          </button>
+        </div>
+      )}
+
       {/* Main content: sidebar + calendar */}
-      <div className="flex gap-4">
-        {/* Task sidebar panel */}
-        {sidebarOpen && (
+      <div className={isMobile ? 'flex flex-col' : 'flex gap-4'}>
+        {/* Task sidebar panel - Desktop only */}
+        {!isMobile && sidebarOpen && (
           <div className="w-72 flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col"
             style={{ maxHeight: 'calc(100vh - 140px)' }}
           >
@@ -209,7 +238,7 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
         )}
 
         {/* Calendar */}
-        <div className="flex-1 min-w-0">
+        <div className={`flex-1 min-w-0 ${isMobile && sidebarOpen ? 'pb-[55vh]' : isMobile ? 'pb-16' : ''}`}>
           {viewMode === 'weekly' ? (
             <WeeklyCalendar
               baseDate={currentDate}
@@ -217,10 +246,13 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
               allTasks={tasks}
               onTaskClick={onTaskClick}
               onSlotClick={() => {}}
-              onScheduleTask={onScheduleTask}
+              onScheduleTask={handleScheduleTask}
               onUpdateSlot={onUpdateSlot}
               onRemoveSlot={onRemoveSlot}
               onCompleteTask={onCompleteTask}
+              isMobile={isMobile}
+              selectedTaskId={selectedTaskId}
+              onClearSelection={clearSelection}
             />
           ) : (
             <MonthlyCalendar
@@ -229,16 +261,29 @@ export function CalendarView({ tasks, onTaskClick, onScheduleTask, onUpdateSlot,
               tasks={calendarTasks}
               onTaskClick={onTaskClick}
               onDateClick={() => {}}
-              onScheduleTask={onScheduleTask}
+              onScheduleTask={handleScheduleTask}
+              isMobile={isMobile}
+              selectedTaskId={selectedTaskId}
+              onClearSelection={clearSelection}
             />
           )}
         </div>
       </div>
+
+      {/* Mobile bottom sheet */}
+      {isMobile && sidebarOpen && (
+        <MobileTaskBottomSheet
+          tasks={tasks}
+          selectedTaskId={selectedTaskId}
+          onSelectTask={setSelectedTaskId}
+          onClearSelection={clearSelection}
+        />
+      )}
     </div>
   );
 }
 
-// Draggable task card for calendar sidebar
+// Draggable task card for calendar sidebar (desktop only)
 function CalendarTaskCard({ task, onTaskClick }: { task: Task; onTaskClick: (task: Task) => void }) {
   const priorityConfig = getPriorityConfig(task.priority);
   const listConfig = getListConfig(task.gtdList);

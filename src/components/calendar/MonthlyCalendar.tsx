@@ -9,6 +9,10 @@ interface MonthlyCalendarProps {
   onTaskClick: (task: Task) => void;
   onDateClick: (date: Date) => void;
   onScheduleTask?: (taskId: string, start: Date, end: Date) => void;
+  // Mobile props
+  isMobile?: boolean;
+  selectedTaskId?: string | null;
+  onClearSelection?: () => void;
 }
 
 const DAY_HEADERS = ['月', '火', '水', '木', '金', '土', '日'];
@@ -120,18 +124,29 @@ function TimePickerPopup({
   );
 }
 
-export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, onScheduleTask }: MonthlyCalendarProps) {
+export function MonthlyCalendar({
+  year,
+  month,
+  tasks,
+  onTaskClick,
+  onDateClick,
+  onScheduleTask,
+  isMobile = false,
+  selectedTaskId = null,
+  onClearSelection,
+}: MonthlyCalendarProps) {
   const weeks = getMonthDates(year, month);
   const today = new Date();
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
   const [timePickerState, setTimePickerState] = useState<{ date: Date; taskId: string } | null>(null);
+
+  const isSchedulingMode = isMobile && !!selectedTaskId;
 
   function getTasksForDate(date: Date): { task: Task; label: string }[] {
     const results: { task: Task; label: string }[] = [];
     const seen = new Set<string>();
 
     for (const t of tasks) {
-      // Check calendarSlots (new format - multiple slots per task)
       if (t.calendarSlots && t.calendarSlots.length > 0) {
         for (const slot of t.calendarSlots) {
           const slotDate = new Date(slot.start);
@@ -146,7 +161,6 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
         }
       }
 
-      // Check legacy calendarSlotStart
       if (t.calendarSlotStart && !t.calendarSlots?.length) {
         const slotDate = new Date(t.calendarSlotStart);
         if (isSameDay(slotDate, date) && !seen.has(t.id)) {
@@ -156,7 +170,6 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
         }
       }
 
-      // Check deadline
       if (t.deadline) {
         const deadlineDate = new Date(t.deadline);
         if (isSameDay(deadlineDate, date) && !seen.has(t.id)) {
@@ -166,7 +179,6 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
       }
     }
 
-    // Sort by time
     results.sort((a, b) => a.label.localeCompare(b.label));
     return results;
   }
@@ -186,9 +198,16 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
     setDragOverDate(null);
     const taskId = e.dataTransfer.getData('text/plain');
     if (!taskId || !onScheduleTask) return;
-
-    // Show time picker popup
     setTimePickerState({ date, taskId });
+  }
+
+  function handleDateCellClick(date: Date) {
+    if (isSchedulingMode && selectedTaskId && onScheduleTask) {
+      setTimePickerState({ date, taskId: selectedTaskId });
+      onClearSelection?.();
+    } else {
+      onDateClick(date);
+    }
   }
 
   function handleTimeConfirm(taskId: string, start: Date, end: Date) {
@@ -196,13 +215,15 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
     setTimePickerState(null);
   }
 
+  const maxTasksToShow = isMobile ? 2 : 3;
+
   return (
     <>
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         {/* Day headers */}
         <div className="grid grid-cols-7 border-b border-gray-200">
           {DAY_HEADERS.map(day => (
-            <div key={day} className="p-2 text-center text-xs font-medium text-gray-500 border-r border-gray-100 last:border-r-0">
+            <div key={day} className={`text-center text-xs font-medium text-gray-500 border-r border-gray-100 last:border-r-0 ${isMobile ? 'p-1' : 'p-2'}`}>
               {day}
             </div>
           ))}
@@ -214,7 +235,7 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
             {week.map((date, dayIndex) => {
               if (!date) {
                 return (
-                  <div key={dayIndex} className="min-h-[80px] p-1 bg-gray-50 border-r border-gray-100 last:border-r-0" />
+                  <div key={dayIndex} className={`p-1 bg-gray-50 border-r border-gray-100 last:border-r-0 ${isMobile ? 'min-h-[56px]' : 'min-h-[80px]'}`} />
                 );
               }
               const isToday = isSameDay(date, today);
@@ -225,23 +246,25 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
               return (
                 <div
                   key={dayIndex}
-                  className={`min-h-[80px] p-1 border-r border-gray-100 last:border-r-0 cursor-pointer transition-colors
+                  className={`p-1 border-r border-gray-100 last:border-r-0 cursor-pointer transition-colors
+                    ${isMobile ? 'min-h-[56px]' : 'min-h-[80px]'}
                     ${isToday ? 'bg-blue-50' : 'hover:bg-gray-50'}
                     ${isOver ? 'bg-blue-100 ring-2 ring-blue-400 ring-inset' : ''}
+                    ${isSchedulingMode ? 'ring-1 ring-blue-200 ring-inset hover:bg-blue-50' : ''}
                   `}
-                  onClick={() => onDateClick(date)}
+                  onClick={() => handleDateCellClick(date)}
                   onDragOver={(e) => handleDragOver(e, dateKey)}
                   onDragLeave={handleDragLeave}
                   onDrop={(e) => handleDrop(e, date)}
                 >
-                  <div className={`text-xs mb-1 ${isToday ? 'text-blue-600 font-bold' : 'text-gray-600'}`}>
+                  <div className={`text-xs mb-0.5 ${isToday ? 'text-blue-600 font-bold' : 'text-gray-600'}`}>
                     {date.getDate()}
                   </div>
                   <div className="space-y-0.5">
-                    {dateTasks.slice(0, 3).map(({ task, label }, idx) => (
+                    {dateTasks.slice(0, maxTasksToShow).map(({ task, label }, idx) => (
                       <div
                         key={`${task.id}-${idx}`}
-                        className="text-xs px-1 py-0.5 rounded truncate cursor-pointer"
+                        className={`px-1 py-0.5 rounded truncate cursor-pointer ${isMobile ? 'text-[10px]' : 'text-xs'}`}
                         style={{
                           backgroundColor: `var(--color-priority-${task.priority})`,
                           color: 'white',
@@ -249,11 +272,11 @@ export function MonthlyCalendar({ year, month, tasks, onTaskClick, onDateClick, 
                         }}
                         onClick={(e) => { e.stopPropagation(); onTaskClick(task); }}
                       >
-                        {label}
+                        {isMobile ? task.title : label}
                       </div>
                     ))}
-                    {dateTasks.length > 3 && (
-                      <div className="text-xs text-gray-400 px-1">+{dateTasks.length - 3}件</div>
+                    {dateTasks.length > maxTasksToShow && (
+                      <div className="text-[10px] text-gray-400 px-1">+{dateTasks.length - maxTasksToShow}件</div>
                     )}
                   </div>
                 </div>
