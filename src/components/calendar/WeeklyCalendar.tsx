@@ -57,16 +57,24 @@ export function WeeklyCalendar({
   onClearSelection,
 }: WeeklyCalendarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const hoverSlotRef = useRef<{ dayIndex: number; hour: number; minute: number } | null>(null);
   const weekDates = getWeekDates(baseDate);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [hoverSlot, setHoverSlot] = useState<{ dayIndex: number; hour: number; minute: number } | null>(null);
   const [showNightHours, setShowNightHours] = useState(false);
+  const [slotEditState, setSlotEditState] = useState<{
+    taskId: string;
+    slotId: string;
+    task: Task;
+    start: Date;
+    end: Date;
+  } | null>(null);
 
   // Mobile: single-day view with day index
   const todayDayIndex = weekDates.findIndex(d => isSameDay(d, new Date()));
   const [selectedDayIndex, setSelectedDayIndex] = useState(todayDayIndex >= 0 ? todayDayIndex : 0);
 
-  const totalSlots = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * SLOTS_PER_HOUR;
   const visibleStartHour = showNightHours ? CALENDAR_START_HOUR : CALENDAR_DAY_START_HOUR;
   const timeColWidth = isMobile ? MOBILE_TIME_COL_WIDTH : TIME_COL_WIDTH;
 
@@ -193,30 +201,38 @@ export function WeeklyCalendar({
     startResize(taskId, slotId, slot);
   }, []);
 
-  // Unified pointer move handler
+  // Unified pointer move handler (using refs to avoid stale closures)
   useEffect(() => {
     if (!dragState || (dragState.type !== 'move' && dragState.type !== 'resize')) return;
 
+    // Compute visible slot range based on current visibility setting
+    const effectiveStartHour = showNightHours ? CALENDAR_START_HOUR : CALENDAR_DAY_START_HOUR;
+    const visibleSlotCount = (CALENDAR_END_HOUR - effectiveStartHour) * SLOTS_PER_HOUR;
+
     function handlePointerMove(clientX: number, clientY: number) {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const scrollTop = containerRef.current.scrollTop;
-      const x = clientX - rect.left;
-      const y = clientY - rect.top + scrollTop - 48; // subtract header height
+      if (!gridRef.current) return;
+      // Use gridRef for accurate position relative to the actual grid body
+      const gridRect = gridRef.current.getBoundingClientRect();
+      const x = clientX - gridRect.left;
+      const y = clientY - gridRect.top;
 
       if (isMobile) {
         // Single-day view: only one column
-        const slotIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(y / SLOT_HEIGHT)));
-        const hour = CALENDAR_START_HOUR + Math.floor(slotIndex / SLOTS_PER_HOUR);
+        const slotIndex = Math.max(0, Math.min(visibleSlotCount - 1, Math.floor(y / SLOT_HEIGHT)));
+        const hour = effectiveStartHour + Math.floor(slotIndex / SLOTS_PER_HOUR);
         const minute = (slotIndex % SLOTS_PER_HOUR) * CALENDAR_SLOT_MINUTES;
-        setHoverSlot({ dayIndex: selectedDayIndex, hour, minute });
+        const newSlot = { dayIndex: selectedDayIndex, hour, minute };
+        hoverSlotRef.current = newSlot;
+        setHoverSlot(newSlot);
       } else {
-        const dayWidth = (rect.width - timeColWidth) / 7;
+        const dayWidth = (gridRect.width - timeColWidth) / 7;
         const dayIndex = Math.max(0, Math.min(6, Math.floor((x - timeColWidth) / dayWidth)));
-        const slotIndex = Math.max(0, Math.min(totalSlots - 1, Math.floor(y / SLOT_HEIGHT)));
-        const hour = CALENDAR_START_HOUR + Math.floor(slotIndex / SLOTS_PER_HOUR);
+        const slotIndex = Math.max(0, Math.min(visibleSlotCount - 1, Math.floor(y / SLOT_HEIGHT)));
+        const hour = effectiveStartHour + Math.floor(slotIndex / SLOTS_PER_HOUR);
         const minute = (slotIndex % SLOTS_PER_HOUR) * CALENDAR_SLOT_MINUTES;
-        setHoverSlot({ dayIndex, hour, minute });
+        const newSlot = { dayIndex, hour, minute };
+        hoverSlotRef.current = newSlot;
+        setHoverSlot(newSlot);
       }
     }
 
@@ -231,13 +247,16 @@ export function WeeklyCalendar({
     }
 
     function handleEnd() {
-      if (!dragState || !hoverSlot || !dragState.slotId) {
+      // Use ref to avoid stale closure issue
+      const currentHover = hoverSlotRef.current;
+      if (!dragState || !currentHover || !dragState.slotId) {
         setDragState(null);
         setHoverSlot(null);
+        hoverSlotRef.current = null;
         return;
       }
 
-      const { dayIndex, hour, minute } = hoverSlot;
+      const { dayIndex, hour, minute } = currentHover;
 
       if (dragState.type === 'move') {
         const newStart = dateFromSlot(dayIndex, hour, minute);
@@ -252,6 +271,7 @@ export function WeeklyCalendar({
       }
       setDragState(null);
       setHoverSlot(null);
+      hoverSlotRef.current = null;
     }
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -264,7 +284,7 @@ export function WeeklyCalendar({
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleEnd);
     };
-  }, [dragState, hoverSlot, weekDates, onUpdateSlot, totalSlots, isMobile, selectedDayIndex, timeColWidth]);
+  }, [dragState, weekDates, onUpdateSlot, isMobile, selectedDayIndex, timeColWidth, showNightHours]);
 
   const today = new Date();
   const nightHoursOffset = showNightHours ? 0 : (CALENDAR_DAY_START_HOUR - CALENDAR_START_HOUR) * SLOTS_PER_HOUR * SLOT_HEIGHT;
@@ -367,7 +387,7 @@ export function WeeklyCalendar({
       )}
 
       {/* Time grid body */}
-      <div className={`${isMobile ? 'grid grid-cols-[48px_1fr]' : 'grid grid-cols-[60px_repeat(7,1fr)]'} relative`}>
+      <div ref={gridRef} className={`${isMobile ? 'grid grid-cols-[48px_1fr]' : 'grid grid-cols-[60px_repeat(7,1fr)]'} relative`}>
         {/* Time labels + grid cells */}
         {slots.map(({ hour, minute }) => (
           <div key={`${hour}-${minute}`} className="contents">
@@ -450,6 +470,22 @@ export function WeeklyCalendar({
                 {!isDeadlineOnly && (
                   <div className={`${isMobile ? 'flex' : 'hidden group-hover:flex'} items-center gap-0.5 flex-shrink-0`}>
                     <button
+                      className="w-5 h-5 flex items-center justify-center rounded bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs"
+                      title="時間を編集"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSlotEditState({
+                          taskId: task.id,
+                          slotId: slot.id,
+                          task,
+                          start: new Date(slot.start),
+                          end: new Date(slot.end),
+                        });
+                      }}
+                    >
+                      ✎
+                    </button>
+                    <button
                       className="w-5 h-5 flex items-center justify-center rounded bg-green-100 text-green-700 hover:bg-green-200 text-xs"
                       title="完了"
                       onClick={(e) => { e.stopPropagation(); onCompleteTask(task.id); }}
@@ -484,6 +520,166 @@ export function WeeklyCalendar({
             </div>
           );
         })}
+      </div>
+
+      {/* Slot edit popup */}
+      {slotEditState && (
+        <SlotEditPopup
+          state={slotEditState}
+          weekDates={weekDates}
+          onSave={(taskId, slotId, start, end) => {
+            onUpdateSlot(taskId, slotId, start, end);
+            setSlotEditState(null);
+          }}
+          onDelete={(taskId, slotId) => {
+            onRemoveSlot(taskId, slotId);
+            setSlotEditState(null);
+          }}
+          onCancel={() => setSlotEditState(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Popup for editing a scheduled slot's date and time
+function SlotEditPopup({
+  state,
+  weekDates,
+  onSave,
+  onDelete,
+  onCancel,
+}: {
+  state: { taskId: string; slotId: string; task: Task; start: Date; end: Date };
+  weekDates: Date[];
+  onSave: (taskId: string, slotId: string, start: Date, end: Date) => void;
+  onDelete: (taskId: string, slotId: string) => void;
+  onCancel: () => void;
+}) {
+  const [dayIndex, setDayIndex] = useState(() => {
+    const idx = weekDates.findIndex(d => isSameDay(d, state.start));
+    return idx >= 0 ? idx : 0;
+  });
+  const [startHour, setStartHour] = useState(state.start.getHours());
+  const [startMinute, setStartMinute] = useState(state.start.getMinutes());
+  const [endHour, setEndHour] = useState(state.end.getHours());
+  const [endMinute, setEndMinute] = useState(state.end.getMinutes());
+
+  function handleSave() {
+    const newStart = new Date(weekDates[dayIndex]);
+    newStart.setHours(startHour, startMinute, 0, 0);
+    const newEnd = new Date(weekDates[dayIndex]);
+    newEnd.setHours(endHour, endMinute, 0, 0);
+    if (newEnd.getTime() <= newStart.getTime()) {
+      newEnd.setTime(newStart.getTime() + 30 * 60000);
+    }
+    onSave(state.taskId, state.slotId, newStart, newEnd);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={onCancel}>
+      <div
+        className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full sm:max-w-md p-5 pb-8 sm:pb-5"
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold text-gray-800 mb-1 truncate">{state.task.title}</h3>
+        <p className="text-sm text-gray-500 mb-4">スケジュールを編集</p>
+
+        {/* Day selector */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-600 mb-2">日付</label>
+          <div className="flex gap-1">
+            {weekDates.map((date, i) => (
+              <button
+                key={i}
+                onClick={() => setDayIndex(i)}
+                className={`flex-1 py-2 text-center rounded-lg transition-colors ${
+                  i === dayIndex
+                    ? 'bg-blue-600 text-white font-medium'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <div className="text-xs">{DAY_LABELS[i]}</div>
+                <div className="text-sm font-medium">{date.getDate()}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Time pickers */}
+        <div className="grid grid-cols-2 gap-4 mb-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1">開始</label>
+            <div className="flex items-center gap-1">
+              <select
+                value={startHour}
+                onChange={e => setStartHour(Number(e.target.value))}
+                className="flex-1 border-2 border-gray-300 rounded-lg px-2 py-2 text-sm"
+              >
+                {Array.from({ length: 24 }, (_, i) => (
+                  <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                ))}
+              </select>
+              <span className="text-gray-500 font-bold">:</span>
+              <select
+                value={startMinute}
+                onChange={e => setStartMinute(Number(e.target.value))}
+                className="flex-1 border-2 border-gray-300 rounded-lg px-2 py-2 text-sm"
+              >
+                {[0, 15, 30, 45].map(m => (
+                  <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1">終了</label>
+            <div className="flex items-center gap-1">
+              <select
+                value={endHour}
+                onChange={e => setEndHour(Number(e.target.value))}
+                className="flex-1 border-2 border-gray-300 rounded-lg px-2 py-2 text-sm"
+              >
+                {Array.from({ length: 24 }, (_, i) => (
+                  <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                ))}
+              </select>
+              <span className="text-gray-500 font-bold">:</span>
+              <select
+                value={endMinute}
+                onChange={e => setEndMinute(Number(e.target.value))}
+                className="flex-1 border-2 border-gray-300 rounded-lg px-2 py-2 text-sm"
+              >
+                {[0, 15, 30, 45].map(m => (
+                  <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => onDelete(state.taskId, state.slotId)}
+            className="px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg border border-red-200"
+          >
+            削除
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={onCancel}
+            className="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSave}
+            className="px-4 py-2.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+          >
+            保存
+          </button>
+        </div>
       </div>
     </div>
   );
