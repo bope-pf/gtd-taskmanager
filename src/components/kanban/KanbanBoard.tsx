@@ -83,6 +83,7 @@ export function KanbanBoard({ onCardClick, onAddTask }: KanbanBoardProps) {
   function getTasksForColumn(listId: GtdList): Task[] {
     return tasks
       .filter(t => t.gtdList === listId && !t.isCompleted && t.deletedAt === null)
+      .filter(t => listId !== 'inbox' || !t.projectId) // プロジェクト所属タスクはインボックスに表示しない
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
