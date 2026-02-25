@@ -166,10 +166,17 @@ function App() {
   // Assign/unassign task to project
   const handleAssignProject = useCallback(async (taskId: string, projectId: string | null) => {
     await taskRepo.updateTask(taskId, { projectId });
+    // インボックスのタスクにプロジェクトを割り当てた場合、「次にとるべき行動」に移動
+    if (projectId) {
+      const task = tasks.find(t => t.id === taskId);
+      if (task && task.gtdList === 'inbox') {
+        await taskRepo.moveTask(taskId, 'next_actions');
+      }
+    }
     setShowTaskForm(false);
     setEditingTask(null);
     setToast({ message: projectId ? 'プロジェクトに追加しました' : 'プロジェクトから外しました', type: 'success' });
-  }, []);
+  }, [tasks]);
 
   // Calendar operations
   const handleScheduleTask = useCallback(async (taskId: string, start: Date, end: Date) => {
